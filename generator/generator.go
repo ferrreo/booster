@@ -131,6 +131,12 @@ func generateInitRamfs(conf *generatorConfig) error {
 		return err
 	}
 
+	// Hacky fix for hid issues in newer kernels
+	if err := kmod.activateModules(false, false, "usbhid", "hid_generic"); err != nil {
+		return err
+	}
+	conf.modulesForceLoad = append(conf.modulesForceLoad, "usbhid", "hid_generic")
+
 	// cbc module is a hard requirement for "encrypted_keys"
 	// https://github.com/torvalds/linux/blob/master/security/keys/encrypted-keys/encrypted.c#L42
 	kmod.addExtraDep("encrypted_keys", "cbc")
