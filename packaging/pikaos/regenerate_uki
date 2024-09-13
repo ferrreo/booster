@@ -1,0 +1,140 @@
+#!/bin/bash -e
+
+#######################################################################
+###                                                                 ###
+### This is a regenerate_uki variant maintained by the PikaOS team. ###
+###                                                                 ###
+### The original regenerate_uki script was developed targeting Arch ###
+### and distro-specific commands and tuning needed to be made.      ###
+###                                                                 ###
+### This regenerate_uki variant targets PikaOS 4 specifically.      ###
+###                                                                 ###
+### Here there be dragons. And cute birbs, but mainly dragons.      ###
+###                                                                 ###
+#######################################################################
+
+# create a unified kernel image (UKI) via ukify
+# by default, the output is written to the current working directory unless specified by the user
+create_uki() {
+  local microcodes
+  local kernel="$1"
+  local pkgbase="$2"
+  local esp="$3"
+  local initrd="/boot/booster.img-${pkgbase}"
+  local osrel="/etc/os-release"
+  local efi_output="${esp}/vmlinuz-${pkgbase}-ukify.efi"
+  #local splash="/usr/share/systemd/bootctl/splash-arch.bmp"
+
+  # find all microcodes and delete the trailing white space
+  microcodes=$(find /boot -name '*-ucode.img' -type f -printf "/boot/%f " | tr -d ' ')
+  microcodes_arg=""
+  if [ -n "${microcodes}" ]; then
+    microcodes_arg="--initrd=\"$microcodes\""
+  fi
+
+  #echo \
+  if [ ! -f "$initrd" ]; then
+    booster build --force --kernel-version "${kernel##/usr/lib/modules/}" "$initrd"
+  else
+    echo "Not regenerating initrd for ${pkgbase} at ${initrd}"
+  fi
+
+  ukify \
+      ${microcodes_arg} \
+      --initrd="$initrd" \
+      --linux="/boot/vmlinuz-${pkgbase}" \
+      --os-release="@${osrel}" \
+      --output="${efi_output}" \
+	  build
+  # Automatically sign ukified EFI archive if sbctl is present.
+  if [ $(command -v sbctl) ]; then
+    sbctl sign "${efi_output}"
+  fi
+  echo "=== ${efi_output} successfully created ==="
+  echo ""
+}
+
+usage() {
+  echo "Usage: regenerate_uki build [path]"
+  echo "See booster(1) for more info and examples."
+}
+
+check_package() {
+  local target=$1
+  local return_instead_of_fail="$2"
+  package="$(dpkg-query -l | grep $target || echo '')"
+  if [ -z "$package" ]; then
+    if [ -n "${return_instead_of_fail}" ]; then
+      echo "failure"
+    else
+      echo "$target is not installed. Please install $target using apt."
+      usage
+      exit 1
+    fi
+  else
+    if [ -n "${return_instead_of_fail}" ]; then
+      echo "$package"
+    fi
+  fi
+  if [ -n "$esplode" ]; then
+    exit 1
+  fi
+}
+
+check_kernel() {
+  local target=$1
+  local check_kernel=$(check_package "$target" true)
+  if [ -z "$check_kernel" ] || [ "${check_kernel}" == "failure" ]; then
+    echo "0"
+  fi
+  echo "1"
+}
+
+main() {
+  local esp
+  local package
+  esp=$(pwd)
+
+  if ! [ "$1" == "build" ]; then
+    usage
+    exit 1
+  fi
+
+  if [ -n "$2" ]; then
+    esp="$2"
+  fi
+
+  if ! [ -d "$esp" ]; then
+    echo "Path to ESP does not exist or is not a directory: ${esp}"
+    usage
+    exit 1
+  fi
+
+  # check if the required packages are installed.
+  check_package "systemd-ukify"
+  check_package "systemd-boot-efi"
+
+  # check for root
+  if ! [ "$EUID" -eq 0 ]; then
+    echo "regenerate_uki must be run as root."
+    exit 1
+  fi
+
+  # find out all installed kernels
+  mapfile -d '' kernels < <(find /usr/lib/modules -maxdepth 1 -type d ! -name "modules" -print0)
+
+  for kernel in "${kernels[@]}"; do
+    echo "=== Processing ${kernel} ==="
+    pkgbase="$(basename $kernel)"
+    if [ "$(check_kernel "${pkgbase}")" == "0" ]; then
+      echo "$target is not a kernel installed by the system. Skipping."
+      continue
+    fi
+
+    create_uki "$kernel" "$pkgbase" "$esp" &
+  done
+
+  wait
+}
+
+main "$@"
