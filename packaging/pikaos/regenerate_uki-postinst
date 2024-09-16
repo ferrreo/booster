@@ -1,0 +1,67 @@
+#! /bin/bash
+
+# Utility function: command check
+check_for_command() {
+  local TARGET_COMMAND="${1}"
+  # Such a joker.
+  [ -n "${TARGET_COMMAND}" ] || { return; }
+  # Silently exit the whole script if the target command is not present.
+  [ $(command -v ${TARGET_COMMAND}) ] || { exit 0; }
+}
+
+# Unified Kernel Image builder command
+REGEN_UKI_COMMAND="/usr/sbin/regenerate_uki"
+
+# SecureBoot Control command
+SBCTL_COMMAND="/usr/sbin/sbctl"
+
+# File check values
+TARGET_EFI_ROOT_DIR="/boot/efi"
+TARGET_UKI_ROOT_DIR="${TARGET_EFI_ROOT_DIR}/EFI"
+TARGET_UKI_BOOT_DIR="${TARGET_UKI_ROOT_DIR}/Linux"
+TARGET_UKI_REFIND_FILE="${TARGET_UKI_BOOT_DIR}/refind_linux.conf"
+TARGET_BOOT_REFIND_FILE="/boot/refind_linux.conf"
+
+# JSON Query command
+JQ_COMMAND="jq"
+
+# Silently exit if the regenerate_uki command is not present.
+#  Provided by `booster`
+check_for_command "${REGEN_UKI_COMMAND}"
+
+# Silently exit if the ukify command is not present.
+#  provided by `systemd-ukify`
+check_for_command "ukify"
+
+# Silently exit if sbctl is not installed.
+# If we don't find the secureboot tool, we can assume
+#  that the user does NOT need to have UKI images
+#  created, much less auto-signed.
+check_for_command "${SBCTL_COMMAND}"
+
+# sbctl output analysis uses jq. If not installed,
+#  silently exit.
+check_for_command "${JQ_COMMAND}"
+
+# Verify that sbctl reports being properly installed.
+#  If the SecureBoot bits are not installed, generating
+#  and signing an UKI is useless. and thus we'd skip.
+[ "$( ${SBCTL_COMMAND} status --json | ${JQ_COMMAND} .installed )" == "true" ] || { exit 0; }
+
+# Silently exit if the EFI dir is not at the expected location
+[ -d "${TARGET_EFI_ROOT_DIR}" ] || { exit 0; }
+
+# Silently exit if the EFI dir does not contain expected directories
+[ -d "${TARGET_UKI_ROOT_DIR}" ] || { exit 0; }
+
+# Target directory for UKI generation
+if [ ! -d "${TARGET_UKI_BOOT_DIR}" ]; then
+  mkdir -p "${TARGET_UKI_BOOT_DIR}"
+fi
+
+# rEFInd config existence
+if [ ! -f "${TARGET_UKI_REFIND_FILE}" ]; then
+  [ -f "${TARGET_BOOT_REFIND_FILE}" ] && { cp -f "${TARGET_BOOT_REFIND_FILE}" "${TARGET_UKI_REFIND_FILE}"; }
+fi
+
+"${REGEN_UKI_COMMAND}" build "${TARGET_UKI_BOOT_DIR}"

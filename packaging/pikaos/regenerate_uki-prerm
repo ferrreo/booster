@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Triggered when a kernel is removed. Version is given as an argument.
+inst_kern="${1}"
+
+TARGET_UKI_DIR="/boot/efi/EFI/Linux"
+
+
+# If EFI Linux target dir does not exist, exit silently.
+[ -d "/boot/efi/EFI/Linux" ] || { exit 0; }
+
+#
+echo "Attempting to clean up UKI image for ${inst_kern}"
+
+TARGET_UKI_FILE="${TARGET_UKI_DIR}/vmlinuz-${inst_kern}-ukify.efi"
+
+if [ -f "${TARGET_UKI_FILE}" ]; then
+    echo "Matching Unified Kernel Image file detected at '${TARGET_UKI_FILE}'"
+    echo "Proceeding with cleanup"
+    rm -f "${TARGET_UKI_FILE}" || { echo "Could not remove ${TARGET_UKI_FILE}." ; }
+    if [ $(command -v sbctl) ]; then
+        echo "Attempting to clean up sbctl reference to target UKI file"
+        $(command -v sbctl) remove-file "${TARGET_UKI_FILE}" || { echo "Error while cleaning up sbctl database."; exit 0; }
+    fi
+fi
