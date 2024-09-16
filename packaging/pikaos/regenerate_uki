@@ -32,11 +32,11 @@ create_uki() {
     microcodes_arg="--initrd=\"$microcodes\""
   fi
 
-  #echo \
-  if [ ! -f "$initrd" ]; then
-    booster build --force --kernel-version "${kernel##/usr/lib/modules/}" "$initrd"
-  else
+  if [ -f "$initrd" ] && [ -n "${DO_NOT_OVERWRITE_EXISTING_INITRD}" ]; then
     echo "Not regenerating initrd for ${pkgbase} at ${initrd}"
+  else
+    echo "Regenerating initrd for ${pkgbase} at ${initrd}"
+    booster build --force --kernel-version "${kernel##/usr/lib/modules/}" "$initrd"
   fi
 
   ukify \
@@ -45,11 +45,13 @@ create_uki() {
       --linux="/boot/vmlinuz-${pkgbase}" \
       --os-release="@${osrel}" \
       --output="${efi_output}" \
-	  build
+    build
+
   # Automatically sign ukified EFI archive if sbctl is present.
   if [ $(command -v sbctl) ]; then
     sbctl sign "${efi_output}"
   fi
+
   echo "=== ${efi_output} successfully created ==="
   echo ""
 }
@@ -131,7 +133,7 @@ main() {
       continue
     fi
 
-    create_uki "$kernel" "$pkgbase" "$esp" &
+    create_uki "$kernel" "$pkgbase" "$esp"
   done
 
   wait

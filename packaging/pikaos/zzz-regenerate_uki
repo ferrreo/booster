@@ -1,0 +1,30 @@
+#! /bin/bash
+
+# Unified Kernel Image builder command
+REGEN_UKI_COMMAND="/usr/sbin/regenerate_uki"
+
+# File check values
+TARGET_UKI_DIR="/boot/efi/EFI/Linux"
+TARGET_UKI_REFIND_FILE="/boot/efi/EFI/Linux/refind_linux.conf"
+TARGET_BOOT_REFIND_FILE="/boot/refind_linux.conf"
+
+# Silently exit if the command is not present.
+[ $(command -v ${REGEN_UKI_COMMAND}) ] || { exit 0; }
+
+# Silently exit if the EFI dir is not at the expected location
+[ -d "/boot/efi" ] || { exit 0; }
+
+# Silently exit if the EFI dir does not contain expected directories
+[ -d "/boot/efi/EFI" ] || { exit 0; }
+
+# Target directory for UKI generation
+if [ ! -d "${TARGET_UKI_DIR}" ]; then
+  mkdir -p "${TARGET_UKI_DIR}"
+fi
+
+# rEFInd config existence
+if [ ! -f "${TARGET_UKI_REFIND_FILE}" ]; then
+  [ -f "${TARGET_BOOT_REFIND_FILE}" ] && { cp -f "${TARGET_BOOT_REFIND_FILE}" "${TARGET_UKI_REFIND_FILE}"; }
+fi
+
+"${REGEN_UKI_COMMAND}" build "${TARGET_UKI_DIR}"
