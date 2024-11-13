@@ -22,7 +22,9 @@ create_uki() {
   local esp="$3"
   local initrd="/boot/booster.img-${pkgbase}"
   local osrel="/etc/os-release"
-  local efi_output="${esp}/vmlinuz-${pkgbase}-uki.efi"
+  local ukisuffix="uki"
+  local efi_output="${esp}/vmlinuz-${pkgbase}-${ukisuffix}.efi"
+  #local splash="/usr/share/systemd/bootctl/splash-arch.bmp"
 
   # find all microcodes and delete the trailing white space
   microcodes=$(find /boot -name '*-ucode.img' -type f -printf "/boot/%f " | tr -d ' ')
