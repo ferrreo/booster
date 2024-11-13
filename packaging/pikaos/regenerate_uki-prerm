@@ -11,17 +11,24 @@ TARGET_UKI_BOOT_DIR="${TARGET_UKI_ROOT_DIR}/Linux"
 # If EFI Linux target dir does not exist, exit silently.
 [ -d "${TARGET_UKI_BOOT_DIR}" ] || { exit 0; }
 
+TARGET_UKI_FILE_NAME="vmlinuz-${inst_kern}-${ukisuffix}*.efi"
+
 #
-echo "Attempting to clean up UKI image for ${inst_kern}"
+echo "Attempting to clean up UKI image for ${inst_kern} in ${TARGET_UKI_BOOT_DIR}"
 
-TARGET_UKI_FILE="${TARGET_UKI_BOOT_DIR}/vmlinuz-${inst_kern}-${ukisuffix}*.efi"
+# Change dir
+pushd "${TARGET_UKI_BOOT_DIR}" || exit 3
 
-if [ -f "${TARGET_UKI_FILE}" ]; then
-    echo "Matching Unified Kernel Image file detected at '${TARGET_UKI_FILE}'"
+for FILE_MATCH in $(ls -d ${TARGET_UKI_FILE_NAME}); do
+    [ -z "${FILE_MATCH}" ] && { echo "Clearly the devs missed something."; exit 5; }
+    echo "Matching Unified Kernel Image file detected at '${FILE_MATCH}'"
     echo "Proceeding with cleanup"
-    rm -f "${TARGET_UKI_FILE}" || { echo "Could not remove ${TARGET_UKI_FILE}." ; }
+    rm -f "${FILE_MATCH}" || { echo "Could not remove ${FILE_MATCH}." ; }
     if [ $(command -v sbctl) ]; then
         echo "Attempting to clean up sbctl reference to target UKI file"
-        $(command -v sbctl) remove-file "${TARGET_UKI_FILE}" || { echo "Error while cleaning up sbctl database."; exit 0; }
+        $(command -v sbctl) remove-file "${TARGET_UKI_BOOT_DIR}/${FILE_MATCH}" || { echo "Error while cleaning up sbctl database."; exit 0; }
     fi
-fi
+done
+
+# Peaceing out
+popd || exit 4
