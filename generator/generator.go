@@ -516,19 +516,29 @@ func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
 		debug("OS release info not found: %v", err)
 	}
 
-	// Add DRM modules to force load list
-	conf.modulesForceLoad = append(conf.modulesForceLoad,
-		"drm",
-	)
+	// Add all Plymouth PNG files
+	plymouthDir := "/usr/share/plymouth"
+	err = filepath.Walk(plymouthDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(strings.ToLower(path), ".png") {
+			if err := img.AppendFile(path); err != nil {
+				debug("Plymouth image not found: %v", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		debug("Error walking Plymouth directory: %v", err)
+	}
 
 	// Add font support for graphical themes
 	if theme != "text" && theme != "details" {
-		// Add logo
 		if err := img.AppendFile("/usr/share/plymouth/debian-logo.png"); err != nil {
 			debug("Plymouth logo not found: %v", err)
 		}
 
-		// Add fontconfig files
 		if err := img.AppendFile("/etc/fonts/fonts.conf"); err != nil {
 			debug("Fontconfig config not found: %v", err)
 		}
