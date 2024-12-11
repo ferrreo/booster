@@ -817,19 +817,8 @@ func initPlymouth() error {
 	cmd := exec.Command("/usr/sbin/plymouthd", "--attach-to-session", "--mode=boot", "--pid-file=/run/plymouth/pid")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-
-	done := make(chan error)
-	go func() {
-		done <- cmd.Run()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("failed to start plymouthd: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("plymouth daemon startup timed out")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start plymouthd: %v", err)
 	}
 
 	debug("Plymouth daemon started, showing splash...")
@@ -837,18 +826,8 @@ func initPlymouth() error {
 	cmd = exec.Command("/usr/bin/plymouth", "show-splash")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-
-	go func() {
-		done <- cmd.Run()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			return fmt.Errorf("failed to show splash: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("plymouth show-splash timed out")
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to show splash: %v", err)
 	}
 
 	debug("Plymouth initialization complete")
