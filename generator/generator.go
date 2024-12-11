@@ -457,6 +457,8 @@ func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
 	if err := img.appendExtraFiles(
 		"/bin/plymouth",
 		"/sbin/plymouthd",
+		"/usr/libexec/plymouth/plymouthd-fd-escrow",
+		"/bin/udevadm",
 	); err != nil {
 		conf.enablePlymouth = false
 		return err
@@ -503,10 +505,16 @@ func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
 
 	// Add renderers
 	rendererDir := filepath.Join(pluginDir, "renderers")
-	renderers := []string{"frame-buffer.so", "drm.so"}
-	for _, renderer := range renderers {
-		if err := img.AppendFile(filepath.Join(rendererDir, renderer)); err != nil {
-			debug("Plymouth renderer not found: %v", err)
+	entries, err = os.ReadDir(rendererDir)
+	if err != nil {
+		debug("Failed to read renderer directory: %v", err)
+	} else {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".so") {
+				if err := img.AppendFile(filepath.Join(rendererDir, entry.Name())); err != nil {
+					debug("Plymouth renderer not found: %v", err)
+				}
+			}
 		}
 	}
 
