@@ -858,6 +858,7 @@ func plymouthMessage(msg string) error {
 func boost() error {
 	info("Starting booster initramfs")
 
+	var err error
 	if err := readConfig(); err != nil {
 		return err
 	}
@@ -868,7 +869,6 @@ func boost() error {
 	}
 
 	// Check if Plymouth should be enabled
-	var err error
 	cmdline, err := os.ReadFile("/proc/cmdline")
 	if err == nil {
 		plymouthEnabled = config.EnablePlymouth && bytes.Contains(cmdline, []byte("splash"))
