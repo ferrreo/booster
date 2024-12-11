@@ -404,8 +404,22 @@ func recoverKeyfilePassword(volumes chan *luks.Volume, d luks.Device, checkSlots
 
 func requestKeyboardPassword(volumes chan *luks.Volume, d luks.Device, checkSlots []int, mappingName string) {
 	for {
-		prompt := fmt.Sprintf("Enter passphrase for %s:", mappingName)
-		password, err := readPassword(prompt, "   Unlocking...")
+		var password []byte
+		var err error
+
+		if plymouthEnabled {
+			prompt := fmt.Sprintf("Please enter passphrase for disk %s:", mappingName)
+			if pass, err := plymouthAskPassword(prompt); err != nil {
+				warning("reading password: %v", err)
+				return
+			} else {
+				password = []byte(pass)
+			}
+		} else {
+			prompt := fmt.Sprintf("Enter passphrase for %s:", mappingName)
+			password, err = readPassword(prompt, "   Unlocking...")
+		}
+
 		if err != nil {
 			warning("reading password: %v", err)
 			return
@@ -427,7 +441,11 @@ func requestKeyboardPassword(volumes chan *luks.Volume, d luks.Device, checkSlot
 		}
 
 		// retry password
-		console("   Incorrect passphrase, please try again\n")
+		if plymouthEnabled {
+			plymouthMessage("   Incorrect passphrase, please try again")
+		} else {
+			console("   Incorrect passphrase, please try again\n")
+		}
 	}
 }
 

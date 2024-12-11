@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -641,6 +642,14 @@ func deleteRamfs() error {
 
 // https://github.com/mirror/busybox/blob/9aa751b08ab03d6396f86c3df77937a19687981b/util-linux/switch_root.c#L297
 func switchRoot() error {
+
+	if plymouthEnabled {
+		cmd := exec.Command("/usr/bin/plymouth", "--newroot="+newRoot)
+		if err := cmd.Run(); err != nil {
+			warning("Plymouth newroot failed: %v", err)
+		}
+	}
+
 	if err := moveMountpointsToHost(); err != nil {
 		return err
 	}
@@ -767,6 +776,85 @@ func walkSysModaliases(path string, fi os.FileInfo, err error) error {
 	return nil
 }
 
+var plymouthEnabled bool
+
+func initPlymouth() error {
+	if !plymouthEnabled {
+		return nil
+	}
+
+	debug("Initializing Plymouth...")
+
+	if err := os.MkdirAll("/run/plymouth", 0755); err != nil {
+		return fmt.Errorf("failed to create Plymouth directory: %v", err)
+	}
+
+	cmd := exec.Command("/usr/sbin/plymouthd", "--mode=boot", "--pid-file=/run/plymouth/pid")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	done := make(chan error)
+	go func() {
+		done <- cmd.Run()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("failed to start plymouthd: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("plymouth daemon startup timed out")
+	}
+
+	debug("Plymouth daemon started, showing splash...")
+
+	cmd = exec.Command("/usr/bin/plymouth", "show-splash")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	go func() {
+		done <- cmd.Run()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("failed to show splash: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("plymouth show-splash timed out")
+	}
+
+	debug("Plymouth initialization complete")
+	return nil
+}
+
+func plymouthAskPassword(device string) (string, error) {
+	if !plymouthEnabled {
+		return "", fmt.Errorf("plymouth not enabled")
+	}
+
+	cmd := exec.Command("/usr/bin/plymouth", "ask-for-password",
+		"--prompt", fmt.Sprintf("Enter passphrase for %s: ", device))
+
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("plymouth password prompt failed: %v", err)
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+func plymouthMessage(msg string) error {
+	if !plymouthEnabled {
+		return nil
+	}
+
+	cmd := exec.Command("/usr/bin/plymouth", "display-message", "--text", msg)
+	return cmd.Run()
+}
+
 func boost() error {
 	info("Starting booster initramfs")
 
@@ -774,7 +862,24 @@ func boost() error {
 		return err
 	}
 
+	// Mount essential filesystems
+	if err := mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
+		return err
+	}
 	var err error
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err == nil {
+		plymouthEnabled = config.EnablePlymouth && bytes.Contains(cmdline, []byte("splash"))
+	}
+
+	if plymouthEnabled {
+		go func() {
+			if err := initPlymouth(); err != nil {
+				warning("Plymouth initialization failed: %v", err)
+			}
+		}()
+	}
+
 	if err := mount("dev", "/dev", "devtmpfs", unix.MS_NOSUID, "mode=0755"); err != nil {
 		return err
 	}
@@ -786,14 +891,10 @@ func boost() error {
 	if err := mount("sys", "/sys", "sysfs", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
 		return err
 	}
-	if err := mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
-		return err
-	}
 	if err := mount("run", "/run", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_STRICTATIME, "mode=755"); err != nil {
 		return err
 	}
 
-	// Mount efivarfs if running in EFI mode
 	if _, err := os.Stat("/sys/firmware/efi"); !errors.Is(err, os.ErrNotExist) {
 		wg := loadModules("efivarfs")
 		wg.Wait()

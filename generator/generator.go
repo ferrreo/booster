@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cavaliergopher/cpio"
@@ -45,6 +47,8 @@ type generatorConfig struct {
 	// virtual console configs
 	enableVirtualConsole     bool
 	vconsolePath, localePath string
+	enablePlymouth           bool
+	plymouthTheme            string
 }
 
 type networkStaticConfig struct {
@@ -254,6 +258,10 @@ func generateInitRamfs(conf *generatorConfig) error {
 		return err
 	}
 
+	if err := img.addPlymouthSupport(conf); err != nil {
+		return err
+	}
+
 	return img.Close()
 }
 
@@ -391,6 +399,7 @@ func (img *Image) appendInitConfig(conf *generatorConfig, kmod *Kmod, vconsole *
 	initConfig.ModprobeOptions = kmod.modprobeOptions
 	initConfig.BuiltinModules = kmod.builtinModules
 	initConfig.VirtualConsole = vconsole
+	initConfig.EnablePlymouth = conf.enablePlymouth
 	initConfig.EnableLVM = conf.enableLVM
 	initConfig.EnableMdraid = conf.enableMdraid
 	initConfig.EnableZfs = conf.enableZfs
@@ -426,4 +435,131 @@ func (img *Image) appendAliasesFile(aliases []alias) error {
 		buff.WriteString("\n")
 	}
 	return img.AppendContent(imageModulesDir+"booster.alias", 0o644, buff.Bytes())
+}
+
+func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
+	if !conf.enablePlymouth {
+		return nil
+	}
+
+	themeCmd := exec.Command("/usr/sbin/plymouth-set-default-theme")
+	themeBytes, err := themeCmd.Output()
+	if err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to get default theme: %v", err)
+	}
+	theme := strings.TrimSpace(string(themeBytes))
+	if theme == "" {
+		conf.enablePlymouth = false
+		return nil
+	}
+
+	if err := img.appendExtraFiles(
+		"/bin/plymouth",
+		"/sbin/plymouthd",
+	); err != nil {
+		conf.enablePlymouth = false
+		return err
+	}
+
+	pluginCmd := exec.Command("plymouth", "--get-splash-plugin-path")
+	pluginPath, err := pluginCmd.Output()
+	if err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to get plugin path: %v", err)
+	}
+	pluginDir := strings.TrimSpace(string(pluginPath))
+
+	// Add base plugins
+	basePlugins := []string{"text.so", "details.so", "label.so"}
+	for _, plugin := range basePlugins {
+		pluginFile := filepath.Join(pluginDir, plugin)
+		if err := img.AppendFile(pluginFile); err != nil {
+			debug("Plymouth plugin not found: %v", err)
+		}
+	}
+
+	// Add theme-specific files
+	themesDir := "/usr/share/plymouth/themes"
+	themeDir := filepath.Join(themesDir, theme)
+	if err := img.AppendRecursive(themeDir); err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to add theme directory: %v", err)
+	}
+
+	// Add base themes
+	if err := img.AppendRecursive(filepath.Join(themesDir, "details")); err != nil {
+		debug("Failed to add details theme: %v", err)
+	}
+	if err := img.AppendRecursive(filepath.Join(themesDir, "text")); err != nil {
+		debug("Failed to add text theme: %v", err)
+	}
+
+	// Add renderers
+	rendererDir := filepath.Join(pluginDir, "renderers")
+	renderers := []string{"frame-buffer.so", "drm.so"}
+	for _, renderer := range renderers {
+		if err := img.AppendFile(filepath.Join(rendererDir, renderer)); err != nil {
+			debug("Plymouth renderer not found: %v", err)
+		}
+	}
+
+	// Add config files
+	if err := img.AppendFile("/etc/plymouth/plymouthd.conf"); err != nil {
+		debug("Plymouth config not found: %v", err)
+	}
+	if err := img.AppendFile("/usr/share/plymouth/plymouthd.defaults"); err != nil {
+		debug("Plymouth defaults not found: %v", err)
+	}
+
+	// Add OS release info
+	if err := img.AppendFile("/etc/os-release"); err != nil {
+		debug("OS release info not found: %v", err)
+	}
+
+	// Add DRM modules to force load list
+	conf.modulesForceLoad = append(conf.modulesForceLoad,
+		"drm",
+	)
+
+	// Add font support for graphical themes
+	if theme != "text" && theme != "details" {
+		// Add logo
+		if err := img.AppendFile("/usr/share/plymouth/debian-logo.png"); err != nil {
+			debug("Plymouth logo not found: %v", err)
+		}
+
+		// Add fontconfig files
+		if err := img.AppendFile("/etc/fonts/fonts.conf"); err != nil {
+			debug("Fontconfig config not found: %v", err)
+		}
+		if err := img.AppendFile("/etc/fonts/conf.d/60-latin.conf"); err != nil {
+			debug("Latin font config not found: %v", err)
+		}
+
+		// Add DejaVu fonts
+		fontPaths := []string{
+			"/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+			"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+		}
+		for _, font := range fontPaths {
+			if err := img.AppendFile(font); err != nil {
+				debug("Font file not found: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (img *Image) AppendRecursive(path string) error {
+	return filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return img.AppendFile(filePath)
+		}
+		return nil
+	})
 }
