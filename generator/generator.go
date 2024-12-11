@@ -48,7 +48,6 @@ type generatorConfig struct {
 	enableVirtualConsole     bool
 	vconsolePath, localePath string
 	enablePlymouth           bool
-	plymouthTheme            string
 }
 
 type networkStaticConfig struct {

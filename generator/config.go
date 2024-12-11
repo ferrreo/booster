@@ -40,7 +40,6 @@ type UserConfig struct {
 	ZfsImportParams      string `yaml:"zfs_import_params"`
 	ZfsCachePath         string `yaml:"zfs_cache_path"`
 	EnablePlymouth       bool   `yaml:"enable_plymouth"`
-	PlymouthTheme        string `yaml:"plymouth_theme"`
 }
 
 // read user config from the specified file. If file parameter is empty string then "empty" configuration is considered
@@ -159,7 +158,6 @@ func readGeneratorConfig(file string) (*generatorConfig, error) {
 		conf.localePath = "/etc/locale.conf"
 	}
 	conf.enablePlymouth = u.EnablePlymouth
-	conf.plymouthTheme = u.PlymouthTheme
 
 	return &conf, nil
 }

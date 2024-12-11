@@ -58,6 +58,8 @@ Booster advantages:
 
  * `mount_timeout` timeout for waiting for the root filesystem to appear. The field format is a decimal number and then unit number. Valid units are "s", "m", "h". If no value specified then default timeout (3 minutes) is used. To disable the timeout completely specify "0s".
 
+ * `enable_plymouth` is a boolean flag that enables Plymouth boot splash screen.
+
  * `strip` is a boolean flag that enables ELF files stripping before adding it to the image. Binaries, shared libraries and kernel modules are examples of ELF files that get processed with strip UNIX tool.
 
    This options is not compatible with signed modules. If you see `booster: finit(crc32,generic): key was rejected by service` boot error please set the `strip` config option to `false`.
