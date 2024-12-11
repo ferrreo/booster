@@ -866,18 +866,12 @@ func boost() error {
 	if err := mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
 		return err
 	}
+
+	// Check if Plymouth should be enabled
 	var err error
 	cmdline, err := os.ReadFile("/proc/cmdline")
 	if err == nil {
 		plymouthEnabled = config.EnablePlymouth && bytes.Contains(cmdline, []byte("splash"))
-	}
-
-	if plymouthEnabled {
-		go func() {
-			if err := initPlymouth(); err != nil {
-				warning("Plymouth initialization failed: %v", err)
-			}
-		}()
 	}
 
 	if err := mount("dev", "/dev", "devtmpfs", unix.MS_NOSUID, "mode=0755"); err != nil {
@@ -891,6 +885,22 @@ func boost() error {
 	if err := mount("sys", "/sys", "sysfs", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
 		return err
 	}
+
+	// Load graphics modules synchronously if Plymouth is enabled
+	if plymouthEnabled {
+		wg := loadModules("simpledrm")
+		wg.Wait()
+
+		// Wait a moment for devices to settle
+		time.Sleep(100 * time.Millisecond)
+
+		// Now initialize Plymouth
+		if err := initPlymouth(); err != nil {
+			warning("Plymouth initialization failed: %v", err)
+			plymouthEnabled = false
+		}
+	}
+
 	if err := mount("run", "/run", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_STRICTATIME, "mode=755"); err != nil {
 		return err
 	}

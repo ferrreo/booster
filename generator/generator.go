@@ -86,7 +86,6 @@ var defaultModulesList = []string{
 	"kernel/drivers/hid/",
 	"kernel/drivers/ata/",
 	"kernel/drivers/scsi/",
-	"kernel/drivers/gpu/drm/",
 	"simpledrm",
 	"hid_generic", "usbhid", "sd_mod", "ahci",
 	"sdhci", "sdhci_acpi", "sdhci_pci", "mmc_block", // mmc
@@ -568,7 +567,6 @@ func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
 
 	conf.modulesForceLoad = append(conf.modulesForceLoad,
 		"drm",
-		"simpledrm",
 	)
 
 	return nil
