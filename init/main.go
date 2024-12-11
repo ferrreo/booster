@@ -814,7 +814,7 @@ func initPlymouth() error {
 		return fmt.Errorf("failed to create Plymouth directory: %v", err)
 	}
 
-	cmd := exec.Command("/usr/sbin/plymouthd", "--attach-to-session", "--mode=boot", "--pid-file=/run/plymouth/pid")
+	cmd := exec.Command("/usr/sbin/plymouthd", "--mode=boot", "--pid-file=/run/plymouth/pid")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
