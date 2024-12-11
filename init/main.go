@@ -785,11 +785,36 @@ func initPlymouth() error {
 
 	debug("Initializing Plymouth...")
 
+	// Trigger graphics subsystem initialization first
+	cmds := [][]string{
+		// Trigger graphics class devices
+		{"udevadm", "trigger", "--action=add", "--attr-match=class=0x030000"},
+		// Trigger related subsystems
+		{"udevadm", "trigger", "--action=add",
+			"--subsystem-match=graphics",
+			"--subsystem-match=drm",
+			"--subsystem-match=tty",
+			"--subsystem-match=acpi"},
+	}
+
+	for _, cmd := range cmds {
+		if err := exec.Command(cmd[0], cmd[1:]...).Run(); err != nil {
+			debug("udevadm trigger warning: %v", err)
+			// Continue anyway as it's not fatal
+		}
+	}
+
+	// Wait for devices to settle
+	settleCmd := exec.Command("udevadm", "settle", "--timeout=10")
+	if err := settleCmd.Run(); err != nil {
+		debug("udevadm settle warning: %v", err)
+	}
+
 	if err := os.MkdirAll("/run/plymouth", 0755); err != nil {
 		return fmt.Errorf("failed to create Plymouth directory: %v", err)
 	}
 
-	cmd := exec.Command("/usr/sbin/plymouthd", "--mode=boot", "--pid-file=/run/plymouth/pid")
+	cmd := exec.Command("/usr/sbin/plymouthd", "--attach-to-session", "--mode=boot", "--pid-file=/run/plymouth/pid")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -888,11 +913,6 @@ func boost() error {
 
 	// Load graphics modules synchronously if Plymouth is enabled
 	if plymouthEnabled {
-		if err := setupFramebuffer(); err != nil {
-			debug("Framebuffer setup failed: %v", err)
-		}
-
-		// Now initialize Plymouth
 		if err := initPlymouth(); err != nil {
 			warning("Plymouth initialization failed: %v", err)
 			plymouthEnabled = false
@@ -1179,50 +1199,4 @@ func main() {
 	// if we are here then emergency shell did not launch
 	// in this case suggest user to reboot the computer
 	reboot()
-}
-
-// setupFramebuffer handles framebuffer initialization with fallbacks
-func setupFramebuffer() error {
-	// Wait for udev and check for graphics devices
-	exec.Command("udevadm", "settle").Run()
-
-	if !hasGraphicsDevices() {
-		time.Sleep(time.Second)
-
-		if !hasGraphicsDevices() {
-
-			// Load simpledrm module synchronously
-			wg := loadModules("simpledrm")
-			wg.Wait()
-
-			exec.Command("udevadm", "settle").Run()
-
-			// Try to set a default mode for fb0 if it exists
-			if _, err := os.Stat("/sys/class/graphics/fb0"); err == nil {
-				modes := []string{
-					"1920x1080-32",
-					"1024x768-32",
-					"800x600-32",
-					"640x480-32",
-				}
-
-				for _, mode := range modes {
-					if err := os.WriteFile("/sys/class/graphics/fb0/mode", []byte(mode), 0644); err == nil {
-						debug("Successfully set framebuffer mode to %s", mode)
-						break
-					}
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func hasGraphicsDevices() bool {
-	_, errFbcon := os.Stat("/sys/class/graphics/fbcon")
-	_, errFb0 := os.Stat("/sys/class/graphics/fb0")
-	_, errDrm := os.Stat("/sys/class/drm/card0")
-
-	return errFbcon == nil && errFb0 == nil && errDrm == nil
 }
