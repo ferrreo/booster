@@ -408,7 +408,7 @@ func requestKeyboardPassword(volumes chan *luks.Volume, d luks.Device, checkSlot
 		var err error
 
 		if plymouthEnabled {
-			prompt := fmt.Sprintf("Please enter passphrase for disk %s:", mappingName)
+			prompt := fmt.Sprintf(" disk %s:", mappingName)
 			if pass, err := plymouthAskPassword(prompt); err != nil {
 				warning("reading password: %v", err)
 				return

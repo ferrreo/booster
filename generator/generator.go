@@ -469,12 +469,18 @@ func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
 	}
 	pluginDir := strings.TrimSpace(string(pluginPath))
 
-	// Add base plugins
-	basePlugins := []string{"text.so", "details.so", "label.so"}
-	for _, plugin := range basePlugins {
-		pluginFile := filepath.Join(pluginDir, plugin)
-		if err := img.AppendFile(pluginFile); err != nil {
-			debug("Plymouth plugin not found: %v", err)
+	// Add all plugins from the plugin directory
+	entries, err := os.ReadDir(pluginDir)
+	if err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to read plugin directory: %v", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".so") {
+			pluginFile := filepath.Join(pluginDir, entry.Name())
+			if err := img.AppendFile(pluginFile); err != nil {
+				debug("Plymouth plugin not found: %v", err)
+			}
 		}
 	}
 
