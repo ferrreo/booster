@@ -564,6 +564,11 @@ func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
 		}
 	}
 
+	conf.modulesForceLoad = append(conf.modulesForceLoad,
+		"drm",
+		"simpledrm",
+	)
+
 	return nil
 }
 
