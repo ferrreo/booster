@@ -785,31 +785,6 @@ func initPlymouth() error {
 
 	debug("Initializing Plymouth...")
 
-	// // Trigger graphics subsystem initialization first
-	// cmds := [][]string{
-	// 	// Trigger graphics class devices
-	// 	{"udevadm", "trigger", "--action=add", "--attr-match=class=0x030000"},
-	// 	// Trigger related subsystems
-	// 	{"udevadm", "trigger", "--action=add",
-	// 		"--subsystem-match=graphics",
-	// 		"--subsystem-match=drm",
-	// 		"--subsystem-match=tty",
-	// 		"--subsystem-match=acpi"},
-	// }
-
-	// for _, cmd := range cmds {
-	// 	if err := exec.Command(cmd[0], cmd[1:]...).Run(); err != nil {
-	// 		debug("udevadm trigger warning: %v", err)
-	// 		// Continue anyway as it's not fatal
-	// 	}
-	// }
-
-	// // Wait for devices to settle
-	// settleCmd := exec.Command("udevadm", "settle", "--timeout=10")
-	// if err := settleCmd.Run(); err != nil {
-	// 	debug("udevadm settle warning: %v", err)
-	// }
-
 	if err := os.MkdirAll("/run/plymouth", 0755); err != nil {
 		return fmt.Errorf("failed to create Plymouth directory: %v", err)
 	}
@@ -948,14 +923,16 @@ func boost() error {
 		}
 	}
 
-	if plymouthEnabled {
+	if !plymouthEnabled {
+		go func() { check(scanSysModaliases()) }()
+	} else {
+		check(scanSysModaliases())
 		if err := initPlymouth(); err != nil {
 			warning("Plymouth initialization failed: %v", err)
 			plymouthEnabled = false
 		}
 	}
 
-	go func() { check(scanSysModaliases()) }()
 	go func() { check(scanSysBlock()) }()
 
 	if config.EnableZfs {
@@ -977,6 +954,7 @@ func boost() error {
 
 	cleanup()
 	loadingModulesWg.Wait() // wait till all modules done loading to kernel
+
 	return switchRoot()
 }
 
@@ -1181,7 +1159,7 @@ func main() {
 }
 
 func getPlymouthdArgs() string {
-	baseArgs := "--mode=boot --pid-file=/run/plymouth/plymouth.pid --attach-to-session"
+	baseArgs := "--mode=boot --pid-file=/run/plymouth/plymouth.pid"
 
 	// Read existing kernel cmdline
 	cmdline, err := os.ReadFile("/proc/cmdline")
