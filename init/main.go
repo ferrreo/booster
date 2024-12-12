@@ -923,16 +923,16 @@ func boost() error {
 		}
 	}
 
-	if !plymouthEnabled {
-		go func() { check(scanSysModaliases()) }()
-	} else {
-		check(scanSysModaliases())
+	if plymouthEnabled {
+		wg := loadModules("video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm")
+		wg.Wait()
 		if err := initPlymouth(); err != nil {
 			warning("Plymouth initialization failed: %v", err)
 			plymouthEnabled = false
 		}
 	}
 
+	go func() { check(scanSysModaliases()) }()
 	go func() { check(scanSysBlock()) }()
 
 	if config.EnableZfs {
