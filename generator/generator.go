@@ -69,11 +69,12 @@ var (
 	firmwareDir     = "/usr/lib/firmware/"
 )
 
-// This is default modules list checked by booster. It either specifies a name of the module
-// or whole directory that added recursively. Dependencies of these scanned modules are added as well.
-//
-// In case of 'universal' build all specified modules are added to the image.
-// In case of 'host' build only modules for active devices are added.
+// List of GPU modules to exclude (similar to initramfs-tools script)
+var excludedGPUModules = []string{
+	"mga", "r128", "savage", "sis", "tdfx", "via", "panfrost",
+}
+
+// Modified defaultModulesList
 var defaultModulesList = []string{
 	"kernel/fs/",
 	"kernel/arch/x86/crypto/",
@@ -92,14 +93,17 @@ var defaultModulesList = []string{
 	"efivarfs",
 	"virtio_pci", "virtio_blk", "virtio_scsi", "virtio_crypto",
 	"mptspi", "vmd",
-	"kernel/drivers/gpu/drm/i2c/",
-	"kernel/drivers/gpu/drm/panel/",
-	"kernel/drivers/gpu/drm/bridge/",
-	"kernel/drivers/video/backlight/",
-	"kernel/drivers/pwm/",
-	"kernel/drivers/platform/x86/",
-	"amdkfd",
-	"hyperv_fb",
+}
+
+var amdgpuFirmwarePatterns = []string{
+	"amdgpu/psp_*.bin",
+	"amdgpu/smu_*.bin",
+	"amdgpu/dcn_*.bin",
+	"amdgpu/gc_*.bin",
+	"amdgpu/sdma_*.bin",
+	"amdgpu/vcn_*.bin",
+	"amdgpu/mes_*.bin",
+	"amdgpu/*.bin", // Catch-all for other AMDGPU firmware
 }
 
 func generateInitRamfs(conf *generatorConfig) error {
@@ -135,6 +139,20 @@ func generateInitRamfs(conf *generatorConfig) error {
 	if err := kmod.activateModules(true, false, defaultModulesList...); err != nil {
 		return err
 	}
+
+	// Add graphics modules and firmware only if Plymouth is enabled
+	if conf.enablePlymouth {
+		// Add graphics modules more selectively
+		if err := kmod.addGraphicsModules(); err != nil {
+			debug("Warning: Failed to add graphics modules: %v", err)
+		}
+
+		// Add GPU firmware if needed
+		if err := img.appendGPUFirmware(); err != nil {
+			debug("Warning: Failed to add GPU firmware: %v", err)
+		}
+	}
+
 	if err := kmod.activateModules(false, true, conf.modules...); err != nil {
 		return err
 	}
@@ -269,6 +287,11 @@ func generateInitRamfs(conf *generatorConfig) error {
 		return err
 	}
 
+	// Add AMDGPU firmware if needed
+	if err := img.appendAMDGPUFirmware(); err != nil {
+		debug("Warning: Failed to add AMDGPU firmware: %v", err)
+	}
+
 	return img.Close()
 }
 
@@ -378,6 +401,27 @@ func findFwFile(fw string) (string, error) {
 }
 
 func (img *Image) appendFirmwareFiles(modName string, fws []string) error {
+	// Special handling for AMDGPU
+	if modName == "amdgpu" {
+		// Add all potential AMDGPU firmware files
+		for _, pattern := range amdgpuFirmwarePatterns {
+			matches, err := filepath.Glob(filepath.Join(firmwareDir, pattern))
+			if err != nil {
+				debug("Error globbing firmware pattern %s: %v", pattern, err)
+				continue
+			}
+			for _, match := range matches {
+				relPath := strings.TrimPrefix(match, firmwareDir)
+				if err := img.AppendFile(match); err != nil {
+					debug("Couldn't add firmware file %s: %v", match, err)
+				} else {
+					debug("Added firmware file: %s", relPath)
+				}
+			}
+		}
+	}
+
+	// Original firmware handling for other modules
 	for _, fw := range fws {
 		path, err := findFwFile(fw)
 
@@ -593,4 +637,132 @@ func (img *Image) AppendRecursive(path string) error {
 		}
 		return nil
 	})
+}
+
+func (kmod *Kmod) addGraphicsModules() error {
+	debug("Adding DRM modules for Plymouth support")
+
+	// First, try to detect active DRM devices
+	entries, err := os.ReadDir("/sys/class/drm")
+	if err != nil {
+		debug("No DRM devices found: %v", err)
+		return nil
+	}
+
+	for _, entry := range entries {
+		devicePath := filepath.Join("/sys/class/drm", entry.Name())
+		// Read the module name for this device
+		modulePath, err := os.Readlink(filepath.Join(devicePath, "device/driver/module"))
+		if err != nil {
+			continue
+		}
+
+		moduleName := filepath.Base(modulePath)
+
+		// Skip excluded modules
+		excluded := false
+		for _, excludedMod := range excludedGPUModules {
+			if moduleName == excludedMod {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			continue
+		}
+
+		// Add the module and its dependencies
+		if err := kmod.activateModules(false, true, moduleName); err != nil {
+			debug("Couldn't add module %s: %v", moduleName, err)
+		}
+	}
+
+	return nil
+}
+
+func (img *Image) appendAMDGPUFirmware() error {
+	// First detect the GPU generation
+	var cardInfo string
+	cardFiles, err := os.ReadDir("/sys/class/drm")
+	if err != nil {
+		return fmt.Errorf("failed to read DRM directory: %v", err)
+	}
+
+	for _, file := range cardFiles {
+		if strings.HasPrefix(file.Name(), "card") {
+			vendorPath := filepath.Join("/sys/class/drm", file.Name(), "device/vendor")
+			content, err := os.ReadFile(vendorPath)
+			if err != nil {
+				continue
+			}
+			// AMD vendor ID is 0x1002
+			if strings.TrimSpace(string(content)) == "0x1002" {
+				devicePath := filepath.Join("/sys/class/drm", file.Name(), "device/device")
+				deviceID, err := os.ReadFile(devicePath)
+				if err != nil {
+					continue
+				}
+				cardInfo = strings.TrimSpace(string(deviceID))
+				break
+			}
+		}
+	}
+
+	if cardInfo == "" {
+		return fmt.Errorf("no AMD GPU detected")
+	}
+
+	debug("Detected AMD GPU with device ID: %s", cardInfo)
+
+	// Required firmware components for modern AMD GPUs
+	requiredComponents := []string{
+		"psp_*.bin",  // Platform Security Processor
+		"smu_*.bin",  // System Management Unit
+		"dcn_*.bin",  // Display Core Next
+		"gc_*.bin",   // Graphics Core
+		"sdma_*.bin", // System DMA
+		"mes_*.bin",  // Micro Engine Scheduler
+		"dmcu*.bin",  // Display Micro Controller Unit
+		"dmcub*.bin", // Display Micro Controller Unit B
+		"vcn_*.bin",  // Video Core Next
+	}
+
+	// Add all potential firmware files
+	for _, component := range requiredComponents {
+		matches, err := filepath.Glob(filepath.Join("/lib/firmware/amdgpu", component))
+		if err != nil {
+			debug("Error globbing %s: %v", component, err)
+			continue
+		}
+
+		for _, match := range matches {
+			debug("Adding firmware file: %s", match)
+			if err := img.AppendFile(match); err != nil {
+				debug("Failed to add firmware file %s: %v", match, err)
+			}
+		}
+
+		// Also check updates directory
+		updatesMatches, err := filepath.Glob(filepath.Join("/lib/firmware/updates/amdgpu", component))
+		if err != nil {
+			continue
+		}
+		for _, match := range updatesMatches {
+			debug("Adding updated firmware file: %s", match)
+			if err := img.AppendFile(match); err != nil {
+				debug("Failed to add updated firmware file %s: %v", match, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (img *Image) appendGPUFirmware() error {
+	// Check for AMD GPU first
+	if err := img.appendAMDGPUFirmware(); err != nil {
+		debug("No AMD GPU firmware added: %v", err)
+	}
+
+	return nil
 }

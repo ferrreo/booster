@@ -890,14 +890,6 @@ func boost() error {
 		return err
 	}
 
-	// Load graphics modules synchronously if Plymouth is enabled
-	if plymouthEnabled {
-		if err := initPlymouth(); err != nil {
-			warning("Plymouth initialization failed: %v", err)
-			plymouthEnabled = false
-		}
-	}
-
 	if err := mount("run", "/run", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_STRICTATIME, "mode=755"); err != nil {
 		return err
 	}
@@ -952,6 +944,13 @@ func boost() error {
 	for _, by := range diskBy {
 		if err := os.MkdirAll("/dev/disk/by-"+by, 0o755); err != nil {
 			return err
+		}
+	}
+
+	if plymouthEnabled {
+		if err := initPlymouth(); err != nil {
+			warning("Plymouth initialization failed: %v", err)
+			plymouthEnabled = false
 		}
 	}
 
