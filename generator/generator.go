@@ -116,7 +116,7 @@ func generateInitRamfs(conf *generatorConfig) error {
 			return err
 		}
 
-		for _, hookDir := range []string{"/etc/booster/hooks-early", "/etc/booster/hooks-late"} {
+		for _, hookDir := range []string{"/usr/share/booster/hooks-early", "/usr/share/booster/hooks-late"} {
 			if err := img.AppendRecursive(hookDir); err != nil && !os.IsNotExist(err) {
 				return err
 			}

@@ -942,7 +942,7 @@ func boost() error {
 	}
 
 	// Execute early hooks
-	if err := executeHooks("/etc/booster/hooks-early"); err != nil {
+	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
 		return err
 	}
 
@@ -996,7 +996,7 @@ func boost() error {
 	loadingModulesWg.Wait() // wait till all modules done loading to kernel
 
 	// Execute late hooks before switching root
-	if err := executeHooks("/etc/booster/hooks-late"); err != nil {
+	if err := executeHooks("/usr/share/booster/hooks-late"); err != nil {
 		return err
 	}
 
