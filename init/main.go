@@ -785,36 +785,37 @@ func initPlymouth() error {
 
 	debug("Initializing Plymouth...")
 
-	// Trigger graphics subsystem initialization first
-	cmds := [][]string{
-		// Trigger graphics class devices
-		{"udevadm", "trigger", "--action=add", "--attr-match=class=0x030000"},
-		// Trigger related subsystems
-		{"udevadm", "trigger", "--action=add",
-			"--subsystem-match=graphics",
-			"--subsystem-match=drm",
-			"--subsystem-match=tty",
-			"--subsystem-match=acpi"},
-	}
+	// // Trigger graphics subsystem initialization first
+	// cmds := [][]string{
+	// 	// Trigger graphics class devices
+	// 	{"udevadm", "trigger", "--action=add", "--attr-match=class=0x030000"},
+	// 	// Trigger related subsystems
+	// 	{"udevadm", "trigger", "--action=add",
+	// 		"--subsystem-match=graphics",
+	// 		"--subsystem-match=drm",
+	// 		"--subsystem-match=tty",
+	// 		"--subsystem-match=acpi"},
+	// }
 
-	for _, cmd := range cmds {
-		if err := exec.Command(cmd[0], cmd[1:]...).Run(); err != nil {
-			debug("udevadm trigger warning: %v", err)
-			// Continue anyway as it's not fatal
-		}
-	}
+	// for _, cmd := range cmds {
+	// 	if err := exec.Command(cmd[0], cmd[1:]...).Run(); err != nil {
+	// 		debug("udevadm trigger warning: %v", err)
+	// 		// Continue anyway as it's not fatal
+	// 	}
+	// }
 
-	// Wait for devices to settle
-	settleCmd := exec.Command("udevadm", "settle", "--timeout=10")
-	if err := settleCmd.Run(); err != nil {
-		debug("udevadm settle warning: %v", err)
-	}
+	// // Wait for devices to settle
+	// settleCmd := exec.Command("udevadm", "settle", "--timeout=10")
+	// if err := settleCmd.Run(); err != nil {
+	// 	debug("udevadm settle warning: %v", err)
+	// }
 
 	if err := os.MkdirAll("/run/plymouth", 0755); err != nil {
 		return fmt.Errorf("failed to create Plymouth directory: %v", err)
 	}
 
-	cmd := exec.Command("/usr/sbin/plymouthd", "--mode=boot", "--pid-file=/run/plymouth/pid")
+	plymouthdArgs := getPlymouthdArgs()
+	cmd := exec.Command("/usr/sbin/plymouthd", strings.Split(plymouthdArgs, " ")...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -1177,4 +1178,20 @@ func main() {
 	// if we are here then emergency shell did not launch
 	// in this case suggest user to reboot the computer
 	reboot()
+}
+
+func getPlymouthdArgs() string {
+	baseArgs := "--mode=boot --pid-file=/run/plymouth/plymouth.pid --attach-to-session"
+
+	// Read existing kernel cmdline
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		debug("Failed to read kernel cmdline: %v", err)
+		cmdline = []byte("")
+	}
+
+	// Always add plymouth.use-simpledrm to ensure basic graphics support
+	return fmt.Sprintf(`%s --kernel-command-line="plymouth.use-simpledrm %s"`,
+		baseArgs,
+		strings.TrimSpace(string(cmdline)))
 }
