@@ -92,6 +92,14 @@ var defaultModulesList = []string{
 	"efivarfs",
 	"virtio_pci", "virtio_blk", "virtio_scsi", "virtio_crypto",
 	"mptspi", "vmd",
+	"kernel/drivers/gpu/drm/i2c/",
+	"kernel/drivers/gpu/drm/panel/",
+	"kernel/drivers/gpu/drm/bridge/",
+	"kernel/drivers/video/backlight/",
+	"kernel/drivers/pwm/",
+	"kernel/drivers/platform/x86/",
+	"amdkfd",
+	"hyperv_fb",
 }
 
 func generateInitRamfs(conf *generatorConfig) error {
