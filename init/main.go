@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -835,6 +836,40 @@ func plymouthMessage(msg string) error {
 	return cmd.Run()
 }
 
+func executeHooks(dir string) error {
+	hooks, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	// Sort hooks by name to ensure execution order
+	sort.Slice(hooks, func(i, j int) bool {
+		return hooks[i].Name() < hooks[j].Name()
+	})
+
+	for _, hook := range hooks {
+		if hook.IsDir() {
+			continue
+		}
+
+		hookPath := filepath.Join(dir, hook.Name())
+		info("Executing hook: %s", hookPath)
+
+		cmd := exec.Command(hookPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			warning("Hook %s failed: %v", hookPath, err)
+			// Continue executing other hooks even if one fails
+		}
+	}
+	return nil
+}
+
 func boost() error {
 	info("Starting booster initramfs")
 
@@ -906,6 +941,11 @@ func boost() error {
 		return err
 	}
 
+	// Execute early hooks
+	if err := executeHooks("/etc/booster/hooks-early"); err != nil {
+		return err
+	}
+
 	rootMounted.Add(1)
 
 	go func() { check(udevListener()) }()
@@ -954,6 +994,11 @@ func boost() error {
 
 	cleanup()
 	loadingModulesWg.Wait() // wait till all modules done loading to kernel
+
+	// Execute late hooks before switching root
+	if err := executeHooks("/etc/booster/hooks-late"); err != nil {
+		return err
+	}
 
 	return switchRoot()
 }

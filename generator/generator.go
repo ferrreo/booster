@@ -48,6 +48,7 @@ type generatorConfig struct {
 	enableVirtualConsole     bool
 	vconsolePath, localePath string
 	enablePlymouth           bool
+	enableHooks              bool
 }
 
 type networkStaticConfig struct {
@@ -108,6 +109,18 @@ func generateInitRamfs(conf *generatorConfig) error {
 
 	if err := appendCompatibilitySymlinks(img); err != nil {
 		return err
+	}
+
+	if conf.enableHooks {
+		if err := img.appendExtraFiles("bash"); err != nil {
+			return err
+		}
+
+		for _, hookDir := range []string{"/etc/booster/hooks-early", "/etc/booster/hooks-late"} {
+			if err := img.AppendRecursive(hookDir); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
 	}
 
 	if err := img.appendInitBinary(conf.initBinary); err != nil {
