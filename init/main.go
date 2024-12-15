@@ -996,13 +996,15 @@ func boost() error {
 		rootMounted.Wait()
 	}
 
-	cleanup()
 	loadingModulesWg.Wait() // wait till all modules done loading to kernel
 
 	// Execute early hooks, after mounting, after udev but before switching root
 	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
 		return err
 	}
+
+	cleanup()
+
 	return switchRoot()
 }
 
