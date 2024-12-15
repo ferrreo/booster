@@ -698,6 +698,10 @@ func switchRoot() error {
 		initArgs = append(initArgs, "--switched-root", "--system", "--deserialize", strconv.Itoa(fd))
 	}
 
+	// Execute late hooks after switching root
+	if err := executeHooks("/usr/share/booster/hooks-late"); err != nil {
+		return err
+	}
 	// Run the OS init
 	info("Switching to the new userspace now. Да пабачэння!")
 	if err := unix.Exec(initBinary, initArgs, nil); err != nil {
@@ -938,11 +942,6 @@ func boost() error {
 		return err
 	}
 
-	// Execute early hooks
-	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
-		return err
-	}
-
 	if err := parseCmdline(); err != nil {
 		return err
 	}
@@ -1000,11 +999,10 @@ func boost() error {
 	cleanup()
 	loadingModulesWg.Wait() // wait till all modules done loading to kernel
 
-	// Execute late hooks before switching root
-	if err := executeHooks("/usr/share/booster/hooks-late"); err != nil {
+	// Execute early hooks, after mounting, after udev but before switching root
+	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
 		return err
 	}
-
 	return switchRoot()
 }
 
