@@ -388,11 +388,30 @@ func mountIsoRootFs(fstype string) error {
 		}
 	}
 
-	// Find the device by label (with escaped space)
-	dev := "/dev/disk/by-label/PikaOS\\ 4"
+	// Find devices of the specified filesystem type
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return fmt.Errorf("failed to read block devices: %v", err)
+	}
+
+	var foundDev string
+	for _, entry := range entries {
+		blk, err := readBlkInfo("/dev/" + entry.Name())
+		if err != nil {
+			continue
+		}
+		if blk.format == fstype {
+			foundDev = blk.path
+			break
+		}
+	}
+
+	if foundDev == "" {
+		return fmt.Errorf("no device found with filesystem type %s", fstype)
+	}
 
 	// Mount live medium
-	if err := mount(dev, "/mnt/medium", fstype, unix.MS_RDONLY, ""); err != nil {
+	if err := mount(foundDev, "/mnt/medium", fstype, unix.MS_RDONLY, ""); err != nil {
 		return fmt.Errorf("failed to mount live medium: %v", err)
 	}
 
