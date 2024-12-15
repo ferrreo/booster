@@ -48,6 +48,7 @@ var (
 	rootFlags      string
 	rootRo, rootRw bool
 	skipRoot       bool = false
+	mountIsoRoot   bool = false
 
 	zfsDataset string
 
@@ -375,6 +376,52 @@ func fsck(dev string) error {
 		}
 	}
 
+	return nil
+}
+
+func mountIsoRootFs(fstype string) error {
+	// Create required mounting directories
+	dirs := []string{"/mnt/medium", "/mnt/filesystem", "/mnt/overlay", newRoot}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %v", dir, err)
+		}
+	}
+
+	// Find the device by label (with escaped space)
+	dev := "/dev/disk/by-label/PikaOS\\ 4"
+
+	// Mount live medium
+	if err := mount(dev, "/mnt/medium", fstype, unix.MS_RDONLY, ""); err != nil {
+		return fmt.Errorf("failed to mount live medium: %v", err)
+	}
+
+	// Mount squashfs loop
+	if err := mount("/mnt/medium/live/filesystem.squashfs", "/mnt/filesystem", "squashfs", unix.MS_RDONLY, "loop"); err != nil {
+		return fmt.Errorf("failed to mount squashfs: %v", err)
+	}
+
+	// Mount tmpfs for overlay
+	if err := mount("overlay_tmpfs", "/mnt/overlay", "tmpfs", 0, "mode=1777"); err != nil {
+		return fmt.Errorf("failed to mount overlay tmpfs: %v", err)
+	}
+
+	// Create overlay work directories
+	overlayDirs := []string{"/mnt/overlay/upper", "/mnt/overlay/work"}
+	for _, dir := range overlayDirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create overlay directory %s: %v", dir, err)
+		}
+	}
+
+	// Mount the final overlay
+	options := "lowerdir=/mnt/filesystem:/mnt/medium,upperdir=/mnt/overlay/upper,workdir=/mnt/overlay/work"
+	if err := mount("overlay", newRoot, "overlay", 0, options); err != nil {
+		return fmt.Errorf("failed to mount overlay: %v", err)
+	}
+
+	// Signal that root is mounted
+	rootMounted.Done()
 	return nil
 }
 
@@ -947,7 +994,7 @@ func boost() error {
 	}
 
 	rootMounted.Add(1)
-	if skipRoot {
+	if skipRoot && !mountIsoRoot {
 		info("Skipping root mount")
 		rootMounted.Done()
 	}
@@ -985,6 +1032,14 @@ func boost() error {
 		}
 	}
 
+	loadingModulesWg.Wait() // wait till all modules done loading to kernel
+
+	if mountIsoRoot {
+		if err := mountIsoRootFs("iso9660"); err != nil {
+			return err
+		}
+	}
+
 	if config.MountTimeout != 0 {
 		// TODO: cancellable, timeout context?
 		timeout := waitTimeout(&rootMounted, time.Duration(config.MountTimeout)*time.Second)
@@ -995,8 +1050,6 @@ func boost() error {
 		// wait for mount forever
 		rootMounted.Wait()
 	}
-
-	loadingModulesWg.Wait() // wait till all modules done loading to kernel
 
 	// Execute early hooks, after mounting, after udev but before switching root
 	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
