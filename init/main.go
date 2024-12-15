@@ -47,6 +47,7 @@ var (
 	rootFsType     string
 	rootFlags      string
 	rootRo, rootRw bool
+	skipRoot       bool = false
 
 	zfsDataset string
 
@@ -947,6 +948,10 @@ func boost() error {
 	}
 
 	rootMounted.Add(1)
+	if skipRoot {
+		info("Skipping root mount")
+		rootMounted.Done()
+	}
 
 	go func() { check(udevListener()) }()
 
