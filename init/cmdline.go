@@ -17,8 +17,7 @@ func parseCmdline() error {
 	}
 
 	if skipRoot && cmdRoot == nil {
-		lbl := "/dev/mapper/root"
-		*cmdRoot = deviceRef{refFsLabel, lbl}
+		cmdRoot = &deviceRef{format: refPath, data: "/dev/mapper/root"}
 	}
 
 	if cmdRoot == nil && !config.EnableZfs { // zfs specifies root dataset with 'zfs=' param.
