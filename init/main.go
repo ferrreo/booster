@@ -937,12 +937,12 @@ func boost() error {
 		return err
 	}
 
-	if err := parseCmdline(); err != nil {
+	// Execute early hooks
+	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
 		return err
 	}
 
-	// Execute early hooks
-	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
+	if err := parseCmdline(); err != nil {
 		return err
 	}
 
