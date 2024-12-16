@@ -388,6 +388,10 @@ func mountIsoRootFs(fstype string) error {
 		}
 	}
 
+	// Load necessary modules for all required filesystems
+	wg := loadModules("isofs", "overlay", "squashfs", "loop")
+	wg.Wait()
+
 	// Find devices of the specified filesystem type
 	entries, err := os.ReadDir("/sys/block")
 	if err != nil {
@@ -396,12 +400,29 @@ func mountIsoRootFs(fstype string) error {
 
 	var foundDev string
 	for _, entry := range entries {
+		// Check the block device itself
 		blk, err := readBlkInfo("/dev/" + entry.Name())
+		if err == nil && blk.format == fstype {
+			foundDev = blk.path
+			break
+		}
+
+		// Check all partitions of this block device
+		parts, err := os.ReadDir("/sys/block/" + entry.Name())
 		if err != nil {
 			continue
 		}
-		if blk.format == fstype {
-			foundDev = blk.path
+		for _, part := range parts {
+			if !strings.HasPrefix(part.Name(), entry.Name()) {
+				continue
+			}
+			blk, err := readBlkInfo("/dev/" + part.Name())
+			if err == nil && blk.format == fstype {
+				foundDev = blk.path
+				break
+			}
+		}
+		if foundDev != "" {
 			break
 		}
 	}
