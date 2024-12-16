@@ -989,15 +989,6 @@ func boost() error {
 		}
 	}
 
-	if plymouthEnabled {
-		wg := loadModules("video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm")
-		wg.Wait()
-		if err := initPlymouth(); err != nil {
-			warning("Plymouth initialization failed: %v", err)
-			plymouthEnabled = false
-		}
-	}
-
 	go func() { check(scanSysModaliases()) }()
 	go func() { check(scanSysBlock()) }()
 
@@ -1007,13 +998,22 @@ func boost() error {
 		}
 	}
 
+	loadingModulesWg.Wait() // wait till all modules done loading to kernel
+
+	if plymouthEnabled {
+		wg := loadModules("video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm")
+		wg.Wait()
+		if err := initPlymouth(); err != nil {
+			warning("Plymouth initialization failed: %v", err)
+			plymouthEnabled = false
+		}
+	}
+
 	if mountIsoRoot {
 		if err := loadCDROMModules(); err != nil {
 			return err
 		}
 	}
-
-	loadingModulesWg.Wait() // wait till all modules done loading to kernel
 
 	if config.MountTimeout != 0 {
 		// TODO: cancellable, timeout context?
