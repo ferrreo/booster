@@ -388,8 +388,8 @@ func mountIsoRootFs(fstype string) error {
 		}
 	}
 
-	// Load necessary modules for all required filesystems
-	wg := loadModules("isofs", "overlay", "squashfs", "loop")
+	// Load necessary modules for all required filesystems and CD-ROM support
+	wg := loadModules("isofs", "overlay", "squashfs", "loop", "cdrom", "sr_mod")
 	wg.Wait()
 
 	// Find devices of the specified filesystem type
@@ -398,28 +398,46 @@ func mountIsoRootFs(fstype string) error {
 		return fmt.Errorf("failed to read block devices: %v", err)
 	}
 
+	info("Scanning for block devices with filesystem type %s", fstype)
 	var foundDev string
 	for _, entry := range entries {
 		// Check the block device itself
-		blk, err := readBlkInfo("/dev/" + entry.Name())
-		if err == nil && blk.format == fstype {
-			foundDev = blk.path
-			break
+		devPath := "/dev/" + entry.Name()
+
+		info("Checking block device: %s", devPath)
+		blk, err := readBlkInfo(devPath)
+		if err != nil {
+			info("Error reading block info for %s: %v", devPath, err)
+		} else {
+			info("Found block device %s with format %s", devPath, blk.format)
+			if blk.format == fstype {
+				foundDev = blk.path
+				break
+			}
 		}
 
 		// Check all partitions of this block device
-		parts, err := os.ReadDir("/sys/block/" + entry.Name())
+		parts, err := os.ReadDir(filepath.Join("/sys/block", entry.Name()))
 		if err != nil {
+			info("Error reading partitions for %s: %v", entry.Name(), err)
 			continue
 		}
-		for _, part := range parts {
-			if !strings.HasPrefix(part.Name(), entry.Name()) {
+		for _, p := range parts {
+			// Only check entries that start with the device name (e.g., sda1, sr0p1)
+			if !strings.HasPrefix(p.Name(), entry.Name()) {
 				continue
 			}
-			blk, err := readBlkInfo("/dev/" + part.Name())
-			if err == nil && blk.format == fstype {
-				foundDev = blk.path
-				break
+			partPath := "/dev/" + p.Name()
+			info("Checking partition: %s", partPath)
+			blk, err := readBlkInfo(partPath)
+			if err != nil {
+				info("Error reading block info for partition %s: %v", partPath, err)
+			} else {
+				info("Found partition %s with format %s", partPath, blk.format)
+				if blk.format == fstype {
+					foundDev = blk.path
+					break
+				}
 			}
 		}
 		if foundDev != "" {
@@ -430,6 +448,8 @@ func mountIsoRootFs(fstype string) error {
 	if foundDev == "" {
 		return fmt.Errorf("no device found with filesystem type %s", fstype)
 	}
+
+	info("Found device %s with correct filesystem type, mounting...", foundDev)
 
 	// Mount live medium
 	if err := mount(foundDev, "/mnt/medium", fstype, unix.MS_RDONLY, ""); err != nil {
