@@ -379,15 +379,7 @@ func fsck(dev string) error {
 	return nil
 }
 
-func mountIsoRootFs(fstype string) error {
-	// Create required mounting directories
-	dirs := []string{"/mnt/medium", "/mnt/filesystem", "/mnt/overlay", newRoot}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create directory %s: %v", dir, err)
-		}
-	}
-
+func loadCDROMModules() error {
 	// Load necessary modules for all required filesystems and CD-ROM support
 	info("Loading CD-ROM and filesystem modules...")
 	wg := loadModules(
@@ -405,96 +397,6 @@ func mountIsoRootFs(fstype string) error {
 	)
 	wg.Wait()
 
-	// Find devices of the specified filesystem type
-	entries, err := os.ReadDir("/sys/block")
-	if err != nil {
-		return fmt.Errorf("failed to read block devices: %v", err)
-	}
-
-	info("Scanning for block devices with filesystem type %s", fstype)
-	var foundDev string
-	for _, entry := range entries {
-		// Check the block device itself
-		devPath := "/dev/" + entry.Name()
-
-		info("Checking block device: %s", devPath)
-		blk, err := readBlkInfo(devPath)
-		if err != nil {
-			info("Error reading block info for %s: %v", devPath, err)
-		} else {
-			info("Found block device %s with format %s", devPath, blk.format)
-			if blk.format == fstype {
-				foundDev = blk.path
-				break
-			}
-		}
-
-		// Check all partitions of this block device
-		parts, err := os.ReadDir(filepath.Join("/sys/block", entry.Name()))
-		if err != nil {
-			info("Error reading partitions for %s: %v", entry.Name(), err)
-			continue
-		}
-		for _, p := range parts {
-			// Only check entries that start with the device name (e.g., sda1, sr0p1)
-			if !strings.HasPrefix(p.Name(), entry.Name()) {
-				continue
-			}
-			partPath := "/dev/" + p.Name()
-			info("Checking partition: %s", partPath)
-			blk, err := readBlkInfo(partPath)
-			if err != nil {
-				info("Error reading block info for partition %s: %v", partPath, err)
-			} else {
-				info("Found partition %s with format %s", partPath, blk.format)
-				if blk.format == fstype {
-					foundDev = blk.path
-					break
-				}
-			}
-		}
-		if foundDev != "" {
-			break
-		}
-	}
-
-	if foundDev == "" {
-		return fmt.Errorf("no device found with filesystem type %s", fstype)
-	}
-
-	info("Found device %s with correct filesystem type, mounting...", foundDev)
-
-	// Mount live medium
-	if err := mount(foundDev, "/mnt/medium", fstype, unix.MS_RDONLY, ""); err != nil {
-		return fmt.Errorf("failed to mount live medium: %v", err)
-	}
-
-	// Mount squashfs loop
-	if err := mount("/mnt/medium/live/filesystem.squashfs", "/mnt/filesystem", "squashfs", unix.MS_RDONLY, "loop"); err != nil {
-		return fmt.Errorf("failed to mount squashfs: %v", err)
-	}
-
-	// Mount tmpfs for overlay
-	if err := mount("overlay_tmpfs", "/mnt/overlay", "tmpfs", 0, "mode=1777"); err != nil {
-		return fmt.Errorf("failed to mount overlay tmpfs: %v", err)
-	}
-
-	// Create overlay work directories
-	overlayDirs := []string{"/mnt/overlay/upper", "/mnt/overlay/work"}
-	for _, dir := range overlayDirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("failed to create overlay directory %s: %v", dir, err)
-		}
-	}
-
-	// Mount the final overlay
-	options := "lowerdir=/mnt/filesystem:/mnt/medium,upperdir=/mnt/overlay/upper,workdir=/mnt/overlay/work"
-	if err := mount("overlay", newRoot, "overlay", 0, options); err != nil {
-		return fmt.Errorf("failed to mount overlay: %v", err)
-	}
-
-	// Signal that root is mounted
-	rootMounted.Done()
 	return nil
 }
 
@@ -1067,7 +969,7 @@ func boost() error {
 	}
 
 	rootMounted.Add(1)
-	if skipRoot && !mountIsoRoot {
+	if skipRoot {
 		info("Skipping root mount")
 		rootMounted.Done()
 	}
@@ -1105,13 +1007,13 @@ func boost() error {
 		}
 	}
 
-	loadingModulesWg.Wait() // wait till all modules done loading to kernel
-
 	if mountIsoRoot {
-		if err := mountIsoRootFs("iso9660"); err != nil {
+		if err := loadCDROMModules(); err != nil {
 			return err
 		}
 	}
+
+	loadingModulesWg.Wait() // wait till all modules done loading to kernel
 
 	if config.MountTimeout != 0 {
 		// TODO: cancellable, timeout context?
