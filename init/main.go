@@ -48,7 +48,7 @@ var (
 	rootFlags      string
 	rootRo, rootRw bool
 	skipRoot       bool = false
-	mountIsoRoot   bool = false
+	loadcdrom      bool = false
 
 	zfsDataset string
 
@@ -1009,7 +1009,7 @@ func boost() error {
 		}
 	}
 
-	if mountIsoRoot {
+	if loadcdrom {
 		if err := loadCDROMModules(); err != nil {
 			return err
 		}

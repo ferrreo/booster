@@ -221,8 +221,8 @@ func parseParams(params string) error {
 			rootRw = true
 		case "booster.skiproot":
 			skipRoot = true
-		case "booster.mountiso":
-			mountIsoRoot = true
+		case "booster.loadcdrom":
+			loadcdrom = true
 		case "rd.luks.options":
 			for _, o := range strings.Split(value, ",") {
 				flag, ok := rdLuksOptions[o]
