@@ -389,7 +389,20 @@ func mountIsoRootFs(fstype string) error {
 	}
 
 	// Load necessary modules for all required filesystems and CD-ROM support
-	wg := loadModules("isofs", "overlay", "squashfs", "loop", "cdrom", "sr_mod")
+	info("Loading CD-ROM and filesystem modules...")
+	wg := loadModules(
+		"isofs",       // ISO9660 filesystem
+		"overlay",     // Overlay filesystem
+		"squashfs",    // SquashFS filesystem
+		"loop",        // Loop device support
+		"cdrom",       // Basic CD-ROM support
+		"sr_mod",      // SCSI CD-ROM support
+		"ata_piix",    // Common SATA/PATA controller
+		"ahci",        // SATA support
+		"libata",      // ATA support
+		"ata_generic", // Generic ATA support
+		"scsi_mod",    // SCSI support
+	)
 	wg.Wait()
 
 	// Find devices of the specified filesystem type
