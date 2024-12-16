@@ -974,6 +974,15 @@ func boost() error {
 		rootMounted.Done()
 	}
 
+	if plymouthEnabled {
+		wg := loadModules("video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm")
+		wg.Wait()
+		if err := initPlymouth(); err != nil {
+			warning("Plymouth initialization failed: %v", err)
+			plymouthEnabled = false
+		}
+	}
+
 	go func() { check(udevListener()) }()
 
 	_ = loadModules(config.ModulesForceLoad...)
@@ -999,15 +1008,6 @@ func boost() error {
 	}
 
 	loadingModulesWg.Wait() // wait till all modules done loading to kernel
-
-	if plymouthEnabled {
-		wg := loadModules("video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm")
-		wg.Wait()
-		if err := initPlymouth(); err != nil {
-			warning("Plymouth initialization failed: %v", err)
-			plymouthEnabled = false
-		}
-	}
 
 	if loadcdrom {
 		if err := loadCDROMModules(); err != nil {
