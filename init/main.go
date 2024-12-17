@@ -394,6 +394,10 @@ func loadCDROMModules() error {
 		"libata",      // ATA support
 		"ata_generic", // Generic ATA support
 		"scsi_mod",    // SCSI support
+		"usb_storage", // USB storage support
+		"ext4",        // ext4 filesystem
+		"vfat",        // vfat filesystem
+		"exfat",       // exfat filesystem
 	)
 	wg.Wait()
 
