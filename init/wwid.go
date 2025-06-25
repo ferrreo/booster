@@ -79,7 +79,8 @@ func wwid(device string) ([]string, error) {
 				return nil, err
 			}
 
-			serial, err := dev.SerialNumber()
+
+			serial, err := safeScsiSerial(dev)
 			if err != nil {
 				return nil, err
 			}
@@ -105,4 +106,17 @@ func wwid(device string) ([]string, error) {
 	}
 
 	return ids, nil
+}
+
+func safeScsiSerial(dev *smart.ScsiDevice) (string, error) {
+	var serial string
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			serial = ""
+			err = nil
+		}
+	}()
+	serial, err = dev.SerialNumber()
+	return serial, err
 }
