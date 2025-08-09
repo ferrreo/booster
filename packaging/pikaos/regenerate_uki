@@ -26,6 +26,9 @@ create_uki() {
   local efi_output="${esp}/vmlinuz-${pkgbase}-${ukisuffix}.efi"
   #local splash="/usr/share/systemd/bootctl/splash-arch.bmp"
 
+  if [ -f "${efi_output}" ]; then
+    echo -e "\033[1;32m===== ${efi_output} already exists =====\033[0m"
+  else
   # find all microcodes and delete the trailing white space
   microcodes=$(find /boot -name '*-ucode.img' -type f -printf "/boot/%f " | tr -d ' ')
   microcodes_arg=""
@@ -49,11 +52,18 @@ create_uki() {
       --output="${efi_output}" \
     build \
         || { echo -e "\033[1;33mThere was an issue generating the UKI for ${pkgbase}.\033[0m"; return; }
-
+  fi
   # Automatically sign ukified EFI archive if sbctl is present.
   if [ $(command -v sbctl) ]; then
-    $(command -v sbctl) sign -s "${efi_output}" \
-        || { echo -e "\033[1;31mThere was an issue signing the UKI for ${pkgbase} located at ${efi_output}.\033[0m"; return; }
+    if [[ $($(command -v sbctl) verify --json "${efi_output}" | jq '.[0].is_signed') == 1 ]]; then
+      echo -e "\033[1;32m===== ${efi_output} is already signed =====\033[0m"
+    else
+      $(command -v sbctl) sign -s "${efi_output}" \
+          || { echo -e "\033[1;31mThere was an issue signing the UKI for ${pkgbase} located at ${efi_output}.\033[0m"; return; }
+      echo -e "\033[1;32m===== ${efi_output} successfully signed =====\033[0m"
+    fi
+  else
+    echo "No sbctl present, will not sign or verify signature."
   fi
 
   echo -e "\033[1;32m=== ${efi_output} successfully created ===\033[0m"
@@ -127,7 +137,7 @@ main() {
   mapfile -d '' kernels < <(find /usr/lib/modules -maxdepth 1 -type d ! -name "modules" -print0)
 
   for kernel in "${kernels[@]}"; do
-    echo "=== Processing ${kernel} ==="
+    echo -e "\033[1;32m=== Processing ${kernel} ===\033[0m"
     pkgbase="$(basename $kernel)"
     if [ "$(check_kernel "${pkgbase}")" == "0" ]; then
       echo "$target is not a kernel installed by the system. Skipping."
