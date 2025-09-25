@@ -404,12 +404,30 @@ func recoverKeyfilePassword(volumes chan *luks.Volume, d luks.Device, checkSlots
 
 func requestKeyboardPassword(volumes chan *luks.Volume, d luks.Device, checkSlots []int, mappingName string) {
 	for {
-		prompt := fmt.Sprintf("Enter passphrase for %s:", mappingName)
-		password, err := readPassword(prompt, "   Unlocking...")
-		if err != nil {
-			warning("reading password: %v", err)
-			return
+		var password []byte
+		var err error
+
+		if plymouthEnabled {
+			prompt := fmt.Sprintf("Enter passphrase for %s:", mappingName)
+			if pass, err := plymouthAskPassword(prompt); err != nil {
+				warning("Plymouth password prompt failed: %v, falling back to console", err)
+				password, err = readPassword(prompt, "")
+				if err != nil {
+					warning("reading password: %v", err)
+					return
+				}
+			} else {
+				password = []byte(pass)
+			}
+		} else {
+			prompt := fmt.Sprintf("Enter passphrase for %s:", mappingName)
+			password, err = readPassword(prompt, "    Unlocking...")
+			if err != nil {
+				warning("reading password: %v", err)
+				return
+			}
 		}
+
 		if len(password) == 0 {
 			continue
 		}
@@ -427,7 +445,14 @@ func requestKeyboardPassword(volumes chan *luks.Volume, d luks.Device, checkSlot
 		}
 
 		// retry password
-		console("   Incorrect passphrase, please try again\n")
+		if plymouthEnabled {
+			if err := plymouthMessage("Incorrect passphrase, please try again"); err != nil {
+				warning("Plymouth message failed: %v", err)
+				console("   Incorrect passphrase, please try again\n")
+			}
+		} else {
+			console("   Incorrect passphrase, please try again\n")
+		}
 	}
 }
 

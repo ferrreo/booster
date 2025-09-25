@@ -39,6 +39,8 @@ type UserConfig struct {
 	EnableZfs            bool   `yaml:"enable_zfs"`
 	ZfsImportParams      string `yaml:"zfs_import_params"`
 	ZfsCachePath         string `yaml:"zfs_cache_path"`
+	EnablePlymouth       bool   `yaml:"enable_plymouth"`
+	EnableHooks          bool   `yaml:"enable_hooks"`
 }
 
 // read user config from the specified file. If file parameter is empty string then "empty" configuration is considered
@@ -156,7 +158,8 @@ func readGeneratorConfig(file string) (*generatorConfig, error) {
 		conf.vconsolePath = "/etc/vconsole.conf"
 		conf.localePath = "/etc/locale.conf"
 	}
-
+	conf.enablePlymouth = u.EnablePlymouth
+	conf.enableHooks = u.EnableHooks
 	return &conf, nil
 }
 

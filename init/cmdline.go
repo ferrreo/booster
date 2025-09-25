@@ -16,6 +16,10 @@ func parseCmdline() error {
 		return err
 	}
 
+	if skipRoot && cmdRoot == nil {
+		cmdRoot = &deviceRef{format: refPath, data: "/dev/mapper/root"}
+	}
+
 	if cmdRoot == nil && !config.EnableZfs { // zfs specifies root dataset with 'zfs=' param.
 		// try to auto-discover gpt partition https://www.freedesktop.org/wiki/Specifications/DiscoverablePartitionsSpec/
 		rootUUIDType, ok := rootAutodiscoveryGptTypes[runtime.GOARCH]
@@ -217,6 +221,10 @@ func parseParams(params string) error {
 			rootRo = true
 		case "rw":
 			rootRw = true
+		case "booster.skiproot":
+			skipRoot = true
+		case "booster.loadcdrom":
+			loadcdrom = true
 		case "rd.luks.options":
 			for _, o := range strings.Split(value, ",") {
 				flag, ok := rdLuksOptions[o]

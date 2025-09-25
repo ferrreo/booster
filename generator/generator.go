@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cavaliergopher/cpio"
@@ -45,6 +47,8 @@ type generatorConfig struct {
 	// virtual console configs
 	enableVirtualConsole     bool
 	vconsolePath, localePath string
+	enablePlymouth           bool
+	enableHooks              bool
 }
 
 type networkStaticConfig struct {
@@ -66,11 +70,12 @@ var (
 	firmwareDir     = "/usr/lib/firmware/"
 )
 
-// This is default modules list checked by booster. It either specifies a name of the module
-// or whole directory that added recursively. Dependencies of these scanned modules are added as well.
-//
-// In case of 'universal' build all specified modules are added to the image.
-// In case of 'host' build only modules for active devices are added.
+// List of GPU modules to exclude (similar to initramfs-tools script)
+var excludedGPUModules = []string{
+	"mga", "r128", "savage", "sis", "tdfx", "via", "panfrost",
+}
+
+// Modified defaultModulesList
 var defaultModulesList = []string{
 	"kernel/fs/",
 	"kernel/arch/x86/crypto/",
@@ -106,6 +111,18 @@ func generateInitRamfs(conf *generatorConfig) error {
 		return err
 	}
 
+	if conf.enableHooks {
+		if err := img.appendExtraFiles("bash"); err != nil {
+			return err
+		}
+
+		for _, hookDir := range []string{"/usr/share/booster/hooks-early", "/usr/share/booster/hooks-late"} {
+			if err := img.AppendRecursive(hookDir); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+
 	if err := img.appendInitBinary(conf.initBinary); err != nil {
 		return err
 	}
@@ -124,6 +141,16 @@ func generateInitRamfs(conf *generatorConfig) error {
 	if err := kmod.activateModules(true, false, defaultModulesList...); err != nil {
 		return err
 	}
+
+	// Ensure simpledrm and its dependencies are included and force-loaded if Plymouth is enabled
+	if conf.enablePlymouth {
+		if err := kmod.activateModules(false, true, "video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm"); err != nil {
+			debug("Failed to include simpledrm module: %v", err)
+		}
+		// Force-load simpledrm at boot time
+		conf.modulesForceLoad = append(conf.modulesForceLoad, "video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm")
+	}
+
 	if err := kmod.activateModules(false, true, conf.modules...); err != nil {
 		return err
 	}
@@ -254,6 +281,10 @@ func generateInitRamfs(conf *generatorConfig) error {
 		return err
 	}
 
+	if err := img.addPlymouthSupport(conf); err != nil {
+		return err
+	}
+
 	return img.Close()
 }
 
@@ -363,6 +394,7 @@ func findFwFile(fw string) (string, error) {
 }
 
 func (img *Image) appendFirmwareFiles(modName string, fws []string) error {
+
 	for _, fw := range fws {
 		path, err := findFwFile(fw)
 
@@ -391,6 +423,7 @@ func (img *Image) appendInitConfig(conf *generatorConfig, kmod *Kmod, vconsole *
 	initConfig.ModprobeOptions = kmod.modprobeOptions
 	initConfig.BuiltinModules = kmod.builtinModules
 	initConfig.VirtualConsole = vconsole
+	initConfig.EnablePlymouth = conf.enablePlymouth
 	initConfig.EnableLVM = conf.enableLVM
 	initConfig.EnableMdraid = conf.enableMdraid
 	initConfig.EnableZfs = conf.enableZfs
@@ -426,4 +459,154 @@ func (img *Image) appendAliasesFile(aliases []alias) error {
 		buff.WriteString("\n")
 	}
 	return img.AppendContent(imageModulesDir+"booster.alias", 0o644, buff.Bytes())
+}
+
+func (img *Image) addPlymouthSupport(conf *generatorConfig) error {
+	if !conf.enablePlymouth {
+		return nil
+	}
+
+	themeCmd := exec.Command("/usr/sbin/plymouth-set-default-theme")
+	themeBytes, err := themeCmd.Output()
+	if err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to get default theme: %v", err)
+	}
+	theme := strings.TrimSpace(string(themeBytes))
+	if theme == "" {
+		conf.enablePlymouth = false
+		return nil
+	}
+
+	if err := img.appendExtraFiles(
+		"/bin/plymouth",
+		"/sbin/plymouthd",
+		"/usr/libexec/plymouth/plymouthd-fd-escrow",
+	); err != nil {
+		conf.enablePlymouth = false
+		return err
+	}
+
+	pluginCmd := exec.Command("plymouth", "--get-splash-plugin-path")
+	pluginPath, err := pluginCmd.Output()
+	if err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to get plugin path: %v", err)
+	}
+	pluginDir := strings.TrimSpace(string(pluginPath))
+
+	// Add all plugins from the plugin directory
+	entries, err := os.ReadDir(pluginDir)
+	if err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to read plugin directory: %v", err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".so") {
+			pluginFile := filepath.Join(pluginDir, entry.Name())
+			if err := img.AppendFile(pluginFile); err != nil {
+				debug("Plymouth plugin not found: %v", err)
+			}
+		}
+	}
+
+	// Add theme-specific files
+	themesDir := "/usr/share/plymouth/themes"
+	themeDir := filepath.Join(themesDir, theme)
+	if err := img.AppendRecursive(themeDir); err != nil {
+		conf.enablePlymouth = false
+		return fmt.Errorf("failed to add theme directory: %v", err)
+	}
+
+	// Add base themes
+	if err := img.AppendRecursive(filepath.Join(themesDir, "details")); err != nil {
+		debug("Failed to add details theme: %v", err)
+	}
+	if err := img.AppendRecursive(filepath.Join(themesDir, "text")); err != nil {
+		debug("Failed to add text theme: %v", err)
+	}
+
+	// Add renderers
+	rendererDir := filepath.Join(pluginDir, "renderers")
+	entries, err = os.ReadDir(rendererDir)
+	if err != nil {
+		debug("Failed to read renderer directory: %v", err)
+	} else {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".so") {
+				if err := img.AppendFile(filepath.Join(rendererDir, entry.Name())); err != nil {
+					debug("Plymouth renderer not found: %v", err)
+				}
+			}
+		}
+	}
+
+	// Add config files
+	if err := img.AppendFile("/etc/plymouth/plymouthd.conf"); err != nil {
+		debug("Plymouth config not found: %v", err)
+	}
+	if err := img.AppendFile("/usr/share/plymouth/plymouthd.defaults"); err != nil {
+		debug("Plymouth defaults not found: %v", err)
+	}
+
+	// Add OS release info
+	if err := img.AppendFile("/etc/os-release"); err != nil {
+		debug("OS release info not found: %v", err)
+	}
+
+	// Add all Plymouth PNG files
+	plymouthDir := "/usr/share/plymouth"
+	err = filepath.Walk(plymouthDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(strings.ToLower(path), ".png") {
+			if err := img.AppendFile(path); err != nil {
+				debug("Plymouth image not found: %v", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		debug("Error walking Plymouth directory: %v", err)
+	}
+
+	// Add font support for graphical themes
+	if theme != "text" && theme != "details" {
+		if err := img.AppendFile("/usr/share/plymouth/debian-logo.png"); err != nil {
+			debug("Plymouth logo not found: %v", err)
+		}
+
+		if err := img.AppendFile("/etc/fonts/fonts.conf"); err != nil {
+			debug("Fontconfig config not found: %v", err)
+		}
+		if err := img.AppendFile("/etc/fonts/conf.d/60-latin.conf"); err != nil {
+			debug("Latin font config not found: %v", err)
+		}
+
+		// Add DejaVu fonts
+		fontPaths := []string{
+			"/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+			"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+		}
+		for _, font := range fontPaths {
+			if err := img.AppendFile(font); err != nil {
+				debug("Font file not found: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (img *Image) AppendRecursive(path string) error {
+	return filepath.Walk(path, func(filePath string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return img.AppendFile(filePath)
+		}
+		return nil
+	})
 }

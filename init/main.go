@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,6 +47,8 @@ var (
 	rootFsType     string
 	rootFlags      string
 	rootRo, rootRw bool
+	skipRoot       bool = false
+	loadcdrom      bool = false
 
 	zfsDataset string
 
@@ -375,6 +379,31 @@ func fsck(dev string) error {
 	return nil
 }
 
+func loadCDROMModules() error {
+	// Load necessary modules for all required filesystems and CD-ROM support
+	info("Loading CD-ROM and filesystem modules...")
+	wg := loadModules(
+		"isofs",       // ISO9660 filesystem
+		"overlay",     // Overlay filesystem
+		"squashfs",    // SquashFS filesystem
+		"loop",        // Loop device support
+		"cdrom",       // Basic CD-ROM support
+		"sr_mod",      // SCSI CD-ROM support
+		"ata_piix",    // Common SATA/PATA controller
+		"ahci",        // SATA support
+		"libata",      // ATA support
+		"ata_generic", // Generic ATA support
+		"scsi_mod",    // SCSI support
+		"usb_storage", // USB storage support
+		"ext4",        // ext4 filesystem
+		"vfat",        // vfat filesystem
+		"exfat",       // exfat filesystem
+	)
+	wg.Wait()
+
+	return nil
+}
+
 func mountRootFs(dev, fstype string) error {
 	// some fs have module names that differs from the fs name itself
 	fstypeModules := map[string]string{
@@ -673,6 +702,14 @@ func deleteRamfs() error {
 
 // https://github.com/mirror/busybox/blob/9aa751b08ab03d6396f86c3df77937a19687981b/util-linux/switch_root.c#L297
 func switchRoot() error {
+
+	if plymouthEnabled {
+		cmd := exec.Command("/usr/bin/plymouth", "--newroot="+newRoot)
+		if err := cmd.Run(); err != nil {
+			warning("Plymouth newroot failed: %v", err)
+		}
+	}
+
 	if err := moveMountpointsToHost(); err != nil {
 		return err
 	}
@@ -719,6 +756,10 @@ func switchRoot() error {
 		initArgs = append(initArgs, "--switched-root", "--system", "--deserialize", strconv.Itoa(fd))
 	}
 
+	// Execute late hooks after switching root
+	if err := executeHooks("/usr/share/booster/hooks-late"); err != nil {
+		return err
+	}
 	// Run the OS init
 	info("Switching to the new userspace now. Да пабачэння!")
 	if err := unix.Exec(initBinary, initArgs, nil); err != nil {
@@ -799,14 +840,118 @@ func walkSysModaliases(path string, fi os.FileInfo, err error) error {
 	return nil
 }
 
+var plymouthEnabled bool
+
+func initPlymouth() error {
+	if !plymouthEnabled {
+		return nil
+	}
+
+	debug("Initializing Plymouth...")
+
+	if err := os.MkdirAll("/run/plymouth", 0755); err != nil {
+		return fmt.Errorf("failed to create Plymouth directory: %v", err)
+	}
+
+	plymouthdArgs := getPlymouthdArgs()
+	cmd := exec.Command("/usr/sbin/plymouthd", strings.Split(plymouthdArgs, " ")...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to start plymouthd: %v", err)
+	}
+
+	debug("Plymouth daemon started, showing splash...")
+
+	cmd = exec.Command("/usr/bin/plymouth", "show-splash")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to show splash: %v", err)
+	}
+
+	debug("Plymouth initialization complete")
+	return nil
+}
+
+func plymouthAskPassword(device string) (string, error) {
+	if !plymouthEnabled {
+		return "", fmt.Errorf("plymouth not enabled")
+	}
+
+	cmd := exec.Command("/usr/bin/plymouth", "ask-for-password",
+		"--prompt", fmt.Sprintf("Enter passphrase for %s: ", device))
+
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("plymouth password prompt failed: %v", err)
+	}
+
+	return strings.TrimSpace(string(output)), nil
+}
+
+func plymouthMessage(msg string) error {
+	if !plymouthEnabled {
+		return nil
+	}
+
+	cmd := exec.Command("/usr/bin/plymouth", "display-message", "--text", msg)
+	return cmd.Run()
+}
+
+func executeHooks(dir string) error {
+	hooks, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	// Sort hooks by name to ensure execution order
+	sort.Slice(hooks, func(i, j int) bool {
+		return hooks[i].Name() < hooks[j].Name()
+	})
+
+	for _, hook := range hooks {
+		if hook.IsDir() {
+			continue
+		}
+
+		hookPath := filepath.Join(dir, hook.Name())
+		info("Executing hook: %s", hookPath)
+
+		cmd := exec.Command(hookPath)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			warning("Hook %s failed: %v", hookPath, err)
+			// Continue executing other hooks even if one fails
+		}
+	}
+	return nil
+}
+
 func boost() error {
 	info("Starting booster initramfs")
 
+	var err error
 	if err := readConfig(); err != nil {
 		return err
 	}
 
-	var err error
+	// Mount essential filesystems
+	if err := mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
+		return err
+	}
+
+	// Check if Plymouth should be enabled
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err == nil {
+		plymouthEnabled = config.EnablePlymouth && bytes.Contains(cmdline, []byte("splash"))
+	}
+
 	if err := mount("dev", "/dev", "devtmpfs", unix.MS_NOSUID, "mode=0755"); err != nil {
 		return err
 	}
@@ -818,14 +963,11 @@ func boost() error {
 	if err := mount("sys", "/sys", "sysfs", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
 		return err
 	}
-	if err := mount("proc", "/proc", "proc", unix.MS_NOSUID|unix.MS_NOEXEC|unix.MS_NODEV, ""); err != nil {
-		return err
-	}
+
 	if err := mount("run", "/run", "tmpfs", unix.MS_NOSUID|unix.MS_NODEV|unix.MS_STRICTATIME, "mode=755"); err != nil {
 		return err
 	}
 
-	// Mount efivarfs if running in EFI mode
 	if _, err := os.Stat("/sys/firmware/efi"); !errors.Is(err, os.ErrNotExist) {
 		wg := loadModules("efivarfs")
 		wg.Wait()
@@ -863,6 +1005,19 @@ func boost() error {
 	}
 
 	rootMounted.Add(1)
+	if skipRoot {
+		info("Skipping root mount")
+		rootMounted.Done()
+	}
+
+	if plymouthEnabled {
+		wg := loadModules("video", "wmi", "simpledrm", "drm_kms_helper", "drm_ttm_helper", "drm_display_helper", "ttm")
+		wg.Wait()
+		if err := initPlymouth(); err != nil {
+			warning("Plymouth initialization failed: %v", err)
+			plymouthEnabled = false
+		}
+	}
 
 	go func() { check(udevListener()) }()
 
@@ -888,6 +1043,14 @@ func boost() error {
 		}
 	}
 
+	loadingModulesWg.Wait() // wait till all modules done loading to kernel
+
+	if loadcdrom {
+		if err := loadCDROMModules(); err != nil {
+			return err
+		}
+	}
+
 	if config.MountTimeout != 0 {
 		// TODO: cancellable, timeout context?
 		timeout := waitTimeout(&rootMounted, time.Duration(config.MountTimeout)*time.Second)
@@ -899,8 +1062,13 @@ func boost() error {
 		rootMounted.Wait()
 	}
 
+	// Execute early hooks, after mounting, after udev but before switching root
+	if err := executeHooks("/usr/share/booster/hooks-early"); err != nil {
+		return err
+	}
+
 	cleanup()
-	loadingModulesWg.Wait() // wait till all modules done loading to kernel
+
 	return switchRoot()
 }
 
@@ -1102,4 +1270,20 @@ func main() {
 	// if we are here then emergency shell did not launch
 	// in this case suggest user to reboot the computer
 	reboot()
+}
+
+func getPlymouthdArgs() string {
+	baseArgs := "--mode=boot --pid-file=/run/plymouth/plymouth.pid"
+
+	// Read existing kernel cmdline
+	cmdline, err := os.ReadFile("/proc/cmdline")
+	if err != nil {
+		debug("Failed to read kernel cmdline: %v", err)
+		cmdline = []byte("")
+	}
+
+	// Always add plymouth.use-simpledrm to ensure basic graphics support
+	return fmt.Sprintf(`%s --kernel-command-line="plymouth.use-simpledrm %s"`,
+		baseArgs,
+		strings.TrimSpace(string(cmdline)))
 }

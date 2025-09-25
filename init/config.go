@@ -33,6 +33,7 @@ type InitConfig struct {
 	EnableLVM              bool                `yaml:",omitempty"`
 	EnableMdraid           bool                `yaml:",omitempty"`
 	EnableZfs              bool                `yaml:",omitempty"`
+	EnablePlymouth         bool                `yaml:",omitempty"`
 	ZfsImportParams        string              `yaml:",omitempty"` // TODO: remove it
 }
 
